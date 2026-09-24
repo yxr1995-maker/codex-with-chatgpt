@@ -10,6 +10,7 @@ export interface OAuthDeps {
   store: AuthStore;
   pairing: PairingManager;
   workspaceName: string;
+  getWorkspaceName?: () => string;
   getBaseUrl: (req: Request) => string;
   logger: Logger;
 }
@@ -135,6 +136,7 @@ function pairingPage(opts: {
 }
 
 export function createOAuthRouter(deps: OAuthDeps): Router {
+  const workspaceName = (): string => (deps.getWorkspaceName ? deps.getWorkspaceName() : deps.workspaceName);
   const router = Router();
   const pendingRequests = new Map<string, PendingAuthRequest>();
 
@@ -237,7 +239,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     res
       .status(200)
       .type("html")
-      .send(pairingPage({ requestId: request.id, workspaceName: deps.workspaceName, scopes }));
+      .send(pairingPage({ requestId: request.id, workspaceName: workspaceName(), scopes }));
   });
 
   router.post("/oauth/authorize", urlencoded({ extended: false }), (req, res) => {
@@ -266,7 +268,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
         .send(
           pairingPage({
             requestId: request.id,
-            workspaceName: deps.workspaceName,
+            workspaceName: workspaceName(),
             scopes: request.scopes,
             error: messages[verdict.reason] ?? "Verification failed.",
           })

@@ -145,6 +145,7 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
       store: authStore,
       pairing,
       workspaceName: workspace.name,
+      getWorkspaceName: () => getActive().name,
       getBaseUrl,
       logger,
     })
