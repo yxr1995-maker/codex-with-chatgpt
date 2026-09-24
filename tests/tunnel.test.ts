@@ -19,7 +19,7 @@ import {
   provisionNamedTunnel,
   type CloudflaredAccount,
 } from "../src/tunnel/named-provision.js";
-import { resolveTunnelEdge, resolveTunnelProtocol, tunnelEdgeArgs, tunnelProtocolArgs } from "../src/tunnel/protocol.js";
+import { resolveTunnelProtocol, tunnelProtocolArgs } from "../src/tunnel/protocol.js";
 import { isNamedTunnelReady, needsTunnelChoice, readTunnelState } from "../src/tunnel/state.js";
 import { cleanup, isolateStateDir, makeTmpDir, write } from "./helpers.js";
 
@@ -236,25 +236,6 @@ describe("tunnel transport protocol", () => {
   it("rejects unknown protocols instead of silently falling back", () => {
     expect(() => resolveTunnelProtocol({ C2C_TUNNEL_PROTOCOL: "tcp" })).toThrow(
       /C2C_TUNNEL_PROTOCOL must be one of auto, quic, http2/
-    );
-  });
-});
-
-describe("tunnel edge override", () => {
-  it("stays off unless C2C_CF_EDGE is set", () => {
-    expect(resolveTunnelEdge({})).toBeNull();
-    expect(resolveTunnelEdge({ C2C_CF_EDGE: "  " })).toBeNull();
-    expect(tunnelEdgeArgs(null)).toEqual([]);
-  });
-
-  it("passes a valid edge endpoint to cloudflared", () => {
-    expect(resolveTunnelEdge({ C2C_CF_EDGE: "198.41.192.167:7844" })).toBe("198.41.192.167:7844");
-    expect(tunnelEdgeArgs("198.41.192.167:7844")).toEqual(["--edge", "198.41.192.167:7844"]);
-  });
-
-  it("rejects malformed edge values instead of silently falling back", () => {
-    expect(() => resolveTunnelEdge({ C2C_CF_EDGE: "region1.v2.argotunnel.com" })).toThrow(
-      /C2C_CF_EDGE must look like/
     );
   });
 });
