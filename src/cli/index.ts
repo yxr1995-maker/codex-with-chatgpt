@@ -180,6 +180,9 @@ interface AdminInfo {
   workspaceId: string;
   workspaceName: string;
   workspaceRoot: string;
+  workspaces?: { workspaceId: string; workspaceName: string; workspaceRoot: string }[];
+  activeWorkspaceId?: string;
+  sharedMode?: boolean;
   port: number;
   publicUrl: string | null;
   tunnel: { running: boolean; url: string | null; provider: string };
@@ -411,7 +414,13 @@ program
     }
     say(PRODUCT_NAME);
     say("");
-    check(`Workspace：${info.workspaceName}`);
+    const activeId = info.activeWorkspaceId ?? info.workspaceId;
+    if (activeId !== workspace.id) {
+      check(`Workspace：${workspace.name}（已绑定到共享 Bridge，端口 ${info.port}）`);
+      say(`· Bridge 当前服务：${info.workspaceName}`);
+    } else {
+      check(`Workspace：${info.workspaceName}`);
+    }
     check(`Bridge：运行中（端口 ${info.port}）`);
     if (info.tunnel.running && info.tunnel.url) check(`安全连接：${info.tunnel.url}/mcp`);
     else say("· 安全连接：未启用（本地模式）");
