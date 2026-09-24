@@ -45,6 +45,8 @@ export interface HealthPayload {
   version: string;
   workspaceId: string;
   status: string;
+  workspaceIds?: string[];
+  sharedMode?: boolean;
 }
 
 /** Probe a port and check whether a healthy c2c bridge for the workspace answers. */
@@ -90,7 +92,7 @@ export async function findBridgeObservation(workspaceId: string): Promise<Bridge
   if (!runtime) return { state: "stopped", runtime: null, reason: "runtime_missing" };
 
   const health = await probeBridge(runtime.port);
-  if (health && health.workspaceId === workspaceId) {
+  if (health && (health.workspaceId === workspaceId || health.workspaceIds?.includes(workspaceId))) {
     return { state: "healthy", runtime };
   }
   if (health) {

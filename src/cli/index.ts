@@ -229,10 +229,12 @@ program
   .description("Run the bridge in the foreground (internal)")
   .requiredOption("--workspace <path>")
   .option("--port <port>", "preferred port")
-  .action(async (opts: { workspace: string; port?: string }) => {
+  .option("--shared-workspace <path>", "experimental shared-connector: serve an extra workspace from this bridge (repeatable)", (value: string, acc: string[]) => [...acc, value], [] as string[])
+  .action(async (opts: { workspace: string; port?: string; sharedWorkspace?: string[] }) => {
     const logger = new Logger({ name: "bridge", console: true });
     const bridge = await startBridge({
       workspaceRoot: resolveWorkspace(opts.workspace),
+      sharedWorkspaceRoots: (opts.sharedWorkspace ?? []).map((entry) => resolveWorkspace(entry)),
       port: opts.port ? parseInt(opts.port, 10) : undefined,
       logger,
     });

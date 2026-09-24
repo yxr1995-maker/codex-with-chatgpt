@@ -6,6 +6,12 @@ import type { Logger } from "../logger/index.js";
 export interface BearerAuthDeps {
   store: AuthStore;
   workspaceId: string;
+  /**
+   * Experimental shared-connector mode: additional workspace ids whose
+   * tokens this bridge also accepts. Default (absent) = single-workspace
+   * binding, behavior unchanged.
+   */
+  workspaceIds?: string[];
   getBaseUrl: (req: Request) => string;
   logger: Logger;
 }
@@ -39,8 +45,9 @@ export function bearerAuth(deps: BearerAuthDeps) {
         .json({ error: "unauthorized", error_description: `Token ${verdict.reason}` });
       return;
     }
-    if (verdict.record.workspaceId !== deps.workspaceId) {
-      deps.logger.warn("Rejected MCP request: token bound to a different workspace");
+    const allowed = new Set([deps.workspaceId, ...(deps.workspaceIds ?? [])]);
+    if (!allowed.has(verdict.record.workspaceId)) {
+      deps.logger.warn("Rejected MCP request: token bound to a workspace outside this bridge");
       res.status(403).json({
         error: "forbidden",
         error_description: "This token is not authorized for the connected workspace",
