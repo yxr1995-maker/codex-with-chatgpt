@@ -104,6 +104,38 @@ describe("shared connector experiment", () => {
     expect(r2.box.statusCode).toBe(403);
   });
 
+  it("selects a bound workspace per request without switching", async () => {
+    dirs.push(isolateStateDir());
+    const rootA = makeTmpDir("sel-a");
+    const rootB = makeTmpDir("sel-b");
+    dirs.push(rootA, rootB);
+    write(rootA, "a.txt", "a");
+    write(rootB, "b.txt", "b");
+    const auth = path.join(makeTmpDir("sel-auth"), "store.json");
+    dirs.push(path.dirname(auth));
+    const wsA = new Workspace(rootA);
+    const wsB = new Workspace(rootB);
+    const bridge = await startBridge({ workspaceRoot: rootA, sharedWorkspaceRoots: [rootB], port: 0, persistRuntime: false, authStoreFile: auth });
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const tokens = bridge.authStore.issueTokens({ clientId: "sel-client", scopes: ["workspace.read"] });
+    const client = new Client({ name: "sel-test", version: "1.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(bridge.localBaseUrl() + "/mcp"), { requestInit: { headers: { authorization: "Bearer " + tokens.accessToken } } }));
+    try {
+      const textOf = (r: unknown): string => ((r as { content: { text: string }[] }).content[0]?.text ?? "");
+      const dflt = JSON.parse(textOf(await client.callTool({ name: "workspace_info", arguments: {} }))) as { workspaceId: string };
+      expect(dflt.workspaceId).toBe(wsA.id);
+      const other = JSON.parse(textOf(await client.callTool({ name: "workspace_info", arguments: { workspaceId: wsB.id } }))) as { workspaceId: string };
+      expect(other.workspaceId).toBe(wsB.id);
+      expect(bridge.workspace.id).toBe(wsA.id);
+      const bad = await client.callTool({ name: "workspace_info", arguments: { workspaceId: "000000000000" } });
+      expect((bad as { isError?: boolean }).isError).toBe(true);
+    } finally {
+      await client.close();
+      await bridge.close();
+    }
+  });
+
   it("reads shared roots from C2C_SHARED_WORKSPACES without changing the default", async () => {
     dirs.push(isolateStateDir());
     const rootA = makeTmpDir("env-a");

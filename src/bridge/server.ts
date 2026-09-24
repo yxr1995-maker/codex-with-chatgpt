@@ -152,7 +152,7 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
 
   // ---- MCP endpoint (bearer-protected) --------------------------------------
 
-  const mcpHandler = createMcpHttpHandler(() => createMcpServer({ workspace: getActive(), getWorkspace: getActive, logger }), logger);
+  const mcpHandler = createMcpHttpHandler(() => createMcpServer({ workspace: getActive(), getWorkspace: getActive, getWorkspaceById: (id) => workspaces.get(id) ?? null, logger }), logger);
   app.all(
     "/mcp",
     express.json({ limit: "8mb" }),
