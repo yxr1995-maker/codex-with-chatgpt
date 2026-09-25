@@ -69,9 +69,11 @@ whatever data it needs by itself.
      conversation opens a new chat from the Project collection page — never
      `goto` `https://chatgpt.com/` to create it, and never reuse another
      Codex conversation's chat URL just because `session.url` exists.
-   Each workspace also has exactly ONE ChatGPT connector. Do not create a
-   second connector for the same workspace. Other workspaces may have their
-   own connectors — never edit those.
+   In shared mode, all Codex projects registered on this machine use the ONE
+   existing ChatGPT connector. Do not add, recreate, or pair a connector for
+   each new workspace. Do not maintain `C2C_SHARED_WORKSPACES` by hand.
+   The legacy one-connector-per-workspace instructions below apply only when
+   no shared connector exists.
 7. After first-time setup, never ask the user to approve writing C2C's local
    settings directory. Run `c2c sandbox-allow --json` (idempotent). If it fails
    with EPERM / Operation not permitted, request elevated permissions and retry
@@ -250,6 +252,23 @@ Speak only of 临时地址 / 固定域名 / 登录 Cloudflare.
 
 ## Workflow: first-time setup（"使用 Codex with ChatGPT 完成首次配置"）
 
+**Existing shared connector first:** Run `c2c status -w <workspace> --json`.
+If `running` and `sharedMode` are true, `workspaces` contains this workspace,
+and `tunnel.running` is true, run `c2c doctor -w <workspace> --json`.
+When `report.bridge.ok`, `report.mcp.ok`, and `report.tunnel.ok` are true and
+`chatgptRepair.needed` is false, reuse `chatgptRepair.connectorName` as the
+connector name. Skip `c2c setup`, `c2c pair`, connector settings, and a new
+ChatGPT Project. Set
+`c2c session set -w <workspace> --mode long-chat --connector-name "<shared connector name>"`
+so later coding tasks follow the
+shared chat path. In the existing C2C chat, call `workspace_info` to list
+available workspaces, then call it with this workspace's `workspaceId` and
+verify its name before working. The shared connector can read every registered
+Codex project root; keep all file operations targeted to the chosen
+`workspaceId`. Use the existing chat in this Codex thread when available.
+If there is no saved chat in this thread, start a new chat using the existing
+connector; no connector or Project creation is needed.
+
 1. Detect prerequisites yourself: `node --version` (>= 20), and check `cloudflared`.
    - If cloudflared is missing on macOS run `brew install cloudflared`; on Windows use
      `winget install Cloudflare.cloudflared`. Do this yourself; don't ask.
@@ -369,6 +388,12 @@ next action:
 
 ## Conversation management
 
+In shared mode, an existing ChatGPT connector and chat can serve every
+Codex-registered workspace. A new workspace does not require **Bind Project**
+or a new connector. Use `workspace_info` to select and verify its
+`workspaceId`. The per-workspace Project and long-chat rules below describe
+legacy connections or an explicitly requested separate Project.
+
 `c2c session -w <ws> --json` → `{ session, conversation }`.
 `conversation.mode` is the only switch. Missing / legacy files with a chat URL
 and no Project stay **long-chat**. Do not ask those users to migrate. If they
@@ -414,7 +439,9 @@ One ChatGPT Project per workspace. Mapping:
 2. Same workspace, a **new** Codex conversation → new ChatGPT chat from the
    collection page (`conversation.projectUrl`). Ignore `session.url` unless
    you already saved it earlier in THIS Codex thread.
-3. Different workspace → different Project and different connector.
+3. Different workspace → different Project and connector only in legacy
+   per-workspace mode. In shared mode, select the workspace by `workspaceId`
+   through the existing connector; no new Project or connector is required.
 
 **Open a chat in this Codex thread**
 
@@ -483,10 +510,14 @@ This Project is bound only to:
 - Workspace name: {{workspace_name}}
 - Kind: {{project_type}} ({{languages}} / {{frameworks}})
 - Connector (use this one only): {{connector_name}}
+- Workspace ID: {{workspace_id}}
 
 When you call tools, use ONLY that connector. Do not use any other
-Codex with ChatGPT connector. If workspace_info names a different
-workspace, stop. Do not plan. Do not use this Project's memory.
+Codex with ChatGPT connector. In shared mode, pass `workspaceId` with
+every workspace tool call. If a call for this ID names a different
+workspace, stop. Do not plan or use this Project's memory for that result.
+The unqualified `workspace_info` result may show the bridge's active
+workspace and other registered workspaces; that alone is not a mismatch.
 
 Read code, git, diffs, and any released command output through that
 connector. Never ask anyone to paste file bodies, diffs, or logs. After
@@ -515,6 +546,14 @@ Local checkpoint states (session only, never a ChatGPT `STATE:` line):
 Do not invent `STATE: RESUME`. If the original chat is gone, send HANDOFF.
 All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
 ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
+
+For an already running shared connector, follow **Existing shared connector
+first** above before step 0. Do not treat a missing per-workspace session or
+`chatgptRepair.connectorAction: "create"` with `needed: false` as a reason to
+add or pair another connector. Skip **Connection choice** and **Bind Project**
+for a newly discovered workspace; use the existing connector and pass its
+`workspaceId` on every workspace tool call. If no chat URL is saved for this
+Codex thread, open a new Chat conversation with the existing connector.
 
 0. `c2c tunnel status -w <workspace> --json`. If `needsChoice`, follow
    **Connection choice** first (existing installs: ask once, then remember).
