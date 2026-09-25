@@ -10,5 +10,10 @@ export function resolveTunnelProtocol(env: NodeJS.Dict<string> = process.env): T
 }
 
 export function tunnelProtocolArgs(protocol: TunnelProtocol | null = resolveTunnelProtocol()): string[] {
-  return protocol ? ["--protocol", protocol] : [];
+  const args = protocol ? ["--protocol", protocol] : [];
+  const bindAddr = process.env.C2C_TUNNEL_EDGE_BIND_ADDRESS?.trim();
+  if (bindAddr) {
+    args.push("--edge-bind-address", bindAddr);
+  }
+  return args;
 }
