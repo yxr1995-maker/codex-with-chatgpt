@@ -55,6 +55,12 @@ const gitIdentityOutputSchema = z.object({
   dirty: z.boolean(),
 });
 
+const boundWorkspaceSummarySchema = z.object({
+  workspaceId: z.string(),
+  workspaceName: z.string(),
+  workspaceRoot: z.string(),
+});
+
 const workspaceInfoOutputSchema = {
   workspaceId: z.string(),
   workspaceName: z.string(),
@@ -65,7 +71,9 @@ const workspaceInfoOutputSchema = {
   packageManager: z.string().nullable(),
   scripts: z.record(z.string()),
   git: gitIdentityOutputSchema,
+  workspaces: z.array(boundWorkspaceSummarySchema).optional(),
 };
+
 
 const directoryEntryOutputSchema = z.object({
   path: z.string(),
@@ -179,10 +187,17 @@ const executionOutputOutputSchema = {
   text: z.string().optional().describe("Sanitized command output returned by the read operation"),
 };
 
+export interface WorkspaceSummary {
+  workspaceId: string;
+  workspaceName: string;
+  workspaceRoot: string;
+}
+
 export interface McpContext {
   workspace: Workspace;
   getWorkspace?: () => Workspace;
   getWorkspaceById?: (id: string) => Workspace | null;
+  getAllWorkspaces?: () => WorkspaceSummary[];
   logger: Logger;
 }
 
@@ -219,9 +234,11 @@ export function createMcpServer(ctx: McpContext): McpServer {
       try {
         const project = targetWorkspace(args.workspaceId).detectProject();
         const git = gitInfo(targetWorkspace(args.workspaceId).root);
+        const target = targetWorkspace(args.workspaceId);
+        const all = ctx.getAllWorkspaces ? ctx.getAllWorkspaces() : undefined;
         return okStructured({
-          workspaceId: targetWorkspace(args.workspaceId).id,
-          workspaceName: targetWorkspace(args.workspaceId).name,
+          workspaceId: target.id,
+          workspaceName: target.name,
           rootAlias: "workspace:/",
           ...project,
           git: {
@@ -230,6 +247,7 @@ export function createMcpServer(ctx: McpContext): McpServer {
             commit: git.commit,
             dirty: git.dirty,
           },
+          ...(all && all.length > 0 ? { workspaces: all } : {}),
         });
       } catch (error) {
         return mapError(error);

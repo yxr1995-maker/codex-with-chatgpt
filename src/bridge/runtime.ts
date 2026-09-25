@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ensureDir, getStateDir, readJsonIfExists, writeSecureJson } from "../config/paths.js";
+import { ensureDir, getStateDir, readJsonIfExists, writeSecureJson, DEFAULT_PORT } from "../config/paths.js";
 import { SERVICE_NAME, VERSION } from "../version.js";
 
 /**
@@ -87,9 +87,40 @@ function observePid(pid: number): "present" | "missing" | "unknown" {
  * Distinguish a dead bridge from a probe that simply failed.
  * Read-only: never starts, stops, or clears runtime.
  */
+
+export function listCandidateBridgePorts(): number[] {
+  const ports = new Set<number>();
+  const runtimeDir = path.join(getStateDir(), "runtime");
+  if (fs.existsSync(runtimeDir)) {
+    try {
+      for (const file of fs.readdirSync(runtimeDir)) {
+        if (!file.endsWith(".json")) continue;
+        const entry = readJsonIfExists<RuntimeState>(path.join(runtimeDir, file));
+        if (entry && typeof entry.port === "number" && entry.port > 0) {
+          ports.add(entry.port);
+        }
+      }
+    } catch {}
+  }
+  ports.add(DEFAULT_PORT);
+  return [...ports];
+}
+
 export async function findBridgeObservation(workspaceId: string): Promise<BridgeObservation> {
-  const runtime = readRuntimeState(workspaceId);
-  if (!runtime) return { state: "stopped", runtime: null, reason: "runtime_missing" };
+  let runtime = readRuntimeState(workspaceId);
+  if (!runtime) {
+    const candidatePorts = listCandidateBridgePorts();
+    for (const port of candidatePorts) {
+      const health = await probeBridge(port);
+      if (health && (health.workspaceId === workspaceId || health.workspaceIds?.includes(workspaceId))) {
+        const refreshed = readRuntimeState(workspaceId);
+        if (refreshed) {
+          return { state: "healthy", runtime: refreshed };
+        }
+      }
+    }
+    return { state: "stopped", runtime: null, reason: "runtime_missing" };
+  }
 
   const health = await probeBridge(runtime.port);
   if (health && (health.workspaceId === workspaceId || health.workspaceIds?.includes(workspaceId))) {

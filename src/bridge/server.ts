@@ -3,6 +3,8 @@ import path from "node:path";
 import type { Server } from "node:http";
 import { randomBytes } from "node:crypto";
 import { Workspace } from "../workspace/manager.js";
+import { WorkspaceRegistry, getCodexStateDbPath } from "../workspace/discovery.js";
+import type { WorkspaceSummary } from "../mcp/server.js";
 import { AuthStore } from "../auth/store.js";
 import { createOAuthRouter } from "../auth/oauth.js";
 import { bearerAuth } from "../auth/middleware.js";
@@ -33,6 +35,9 @@ function tunnelForWorkspace(workspaceId: string, logger: Logger): TunnelProvider
 export interface BridgeOptions {
   workspaceRoot: string;
   sharedWorkspaceRoots?: string[];
+  autoDiscoverProjects?: boolean;
+  codexStateDbPath?: string;
+  discoverProjectsFn?: () => string[];
   port?: number;
   host?: string;
   logger?: Logger;
@@ -95,20 +100,36 @@ export function sharedRootsFromEnv(): string[] {
 export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
   const logger = opts.logger ?? nullLogger;
   const workspace = new Workspace(opts.workspaceRoot);
-  const workspaces = new Map<string, Workspace>();
-  workspaces.set(workspace.id, workspace);
-  for (const root of [...(opts.sharedWorkspaceRoots ?? []), ...sharedRootsFromEnv()]) {
-    try {
-      const extra = new Workspace(root);
-      if (!workspaces.has(extra.id)) workspaces.set(extra.id, extra);
-    } catch (error) {
-      logger.warn(`Skipping shared workspace ${root}: ${(error as Error).message}`);
-    }
-  }
   let activeWorkspaceId = workspace.id;
-  const boundIds = (): string[] => [...workspaces.keys()];
-  const getActive = (): Workspace => workspaces.get(activeWorkspaceId) ?? workspace;
-  const sharedMode = workspaces.size > 1;
+
+  const persistSingleRuntime = (entry: Workspace): void => {
+    if (opts.persistRuntime === false) return;
+    const state: RuntimeState = {
+      service: SERVICE_NAME,
+      version: VERSION,
+      workspaceId: entry.id,
+      workspaceRoot: entry.root,
+      pid: process.pid,
+      port,
+      adminToken,
+      publicUrl: publicBaseUrl,
+      startedAt,
+    };
+    writeRuntimeState(state);
+  };
+
+  const registry = new WorkspaceRegistry({
+    primaryWorkspace: workspace,
+    explicitRoots: [...(opts.sharedWorkspaceRoots ?? []), ...sharedRootsFromEnv()],
+    autoDiscover: opts.autoDiscoverProjects,
+    dbPath: opts.codexStateDbPath,
+    discoverFn: opts.discoverProjectsFn,
+    logger,
+  });
+
+  const boundIds = (): string[] => registry.getBoundIds();
+  const getActive = (): Workspace => registry.get(activeWorkspaceId) ?? workspace;
+  const sharedMode = (): boolean => registry.getAll().length > 1;
   const host = opts.host ?? DEFAULT_HOST;
   if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
     throw new Error("The bridge only binds to loopback addresses. Public exposure goes through the tunnel.");
@@ -135,7 +156,7 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
   // ---- Health (public but minimal) ---------------------------------------
 
   app.get("/health", (_req, res) => {
-    res.json({ service: SERVICE_NAME, version: VERSION, workspaceId: getActive().id, workspaceIds: boundIds(), sharedMode, status: "ok" });
+    res.json({ service: SERVICE_NAME, version: VERSION, workspaceId: getActive().id, workspaceIds: boundIds(), sharedMode: sharedMode(), status: "ok" });
   });
 
   // ---- OAuth + discovery ---------------------------------------------------
@@ -153,11 +174,26 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
 
   // ---- MCP endpoint (bearer-protected) --------------------------------------
 
-  const mcpHandler = createMcpHttpHandler(() => createMcpServer({ workspace: getActive(), getWorkspace: getActive, getWorkspaceById: (id) => workspaces.get(id) ?? null, logger }), logger);
+  const mcpHandler = createMcpHttpHandler(
+    () =>
+      createMcpServer({
+        workspace: getActive(),
+        getWorkspace: getActive,
+        getWorkspaceById: (id) => registry.get(id),
+        getAllWorkspaces: () =>
+          registry.getAll().map((ws) => ({
+            workspaceId: ws.id,
+            workspaceName: ws.name,
+            workspaceRoot: ws.root,
+          })),
+        logger,
+      }),
+    logger
+  );
   app.all(
     "/mcp",
     express.json({ limit: "8mb" }),
-    bearerAuth({ store: authStore, workspaceId: workspace.id, workspaceIds: boundIds(), getBaseUrl, logger }),
+    bearerAuth({ store: authStore, workspaceId: workspace.id, workspaceIds: boundIds, getBaseUrl, logger }),
     (req: Request, res: Response) => {
       void mcpHandler(req, res);
     }
@@ -193,12 +229,11 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
       workspaceId: active.id,
       workspaceName: active.name,
       workspaceRoot: active.root,
-      workspaces: boundIds().map((id) => {
-        const entry = workspaces.get(id) as Workspace;
+      workspaces: registry.getAll().map((entry) => {
         return { workspaceId: entry.id, workspaceName: entry.name, workspaceRoot: entry.root };
       }),
       activeWorkspaceId,
-      sharedMode,
+      sharedMode: sharedMode(),
       port,
       publicUrl: publicBaseUrl,
       tunnel: tunnel.status(),
@@ -214,11 +249,11 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
     const key = (body.workspaceId ?? body.root ?? "").trim();
     let next: Workspace | null = null;
     if (key) {
-      next = workspaces.get(key) ?? null;
+      next = registry.get(key);
       if (!next) {
         try {
           const candidate = new Workspace(key);
-          next = workspaces.get(candidate.id) ?? null;
+          next = registry.get(candidate.id);
         } catch {
           next = null;
         }
@@ -276,22 +311,15 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
 
   const persistRuntime = (): void => {
     if (opts.persistRuntime === false) return;
-    for (const entry of workspaces.values()) {
-      const state: RuntimeState = {
-        service: SERVICE_NAME,
-        version: VERSION,
-        workspaceId: entry.id,
-        workspaceRoot: entry.root,
-        pid: process.pid,
-        port,
-        adminToken,
-        publicUrl: publicBaseUrl,
-        startedAt,
-      };
-      writeRuntimeState(state);
+    for (const entry of registry.getAll()) {
+      persistSingleRuntime(entry);
     }
   };
+
   persistRuntime();
+  registry.setOnNewWorkspace((newWs) => {
+    persistSingleRuntime(newWs);
+  });
 
   let closed = false;
   const shutdown = async (): Promise<void> => {
@@ -299,30 +327,34 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
     closed = true;
     await tunnel.stop().catch(() => undefined);
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (opts.persistRuntime !== false) for (const id of workspaces.keys()) clearRuntimeState(id);
+    if (opts.persistRuntime !== false) for (const id of registry.getBoundIds()) clearRuntimeState(id);
     logger.info("Bridge stopped");
   };
 
   const switchWorkspace = (idOrRoot: string): Workspace => {
     const key = idOrRoot.trim();
-    const direct = workspaces.get(key);
-    if (direct) {
-      activeWorkspaceId = direct.id;
-      return direct;
+    let target = registry.get(key);
+    if (!target) {
+      try {
+        const candidate = new Workspace(key);
+        target = registry.get(candidate.id);
+      } catch {
+        target = null;
+      }
     }
-    const candidate = new Workspace(key);
-    const known = workspaces.get(candidate.id);
-    if (!known) throw new Error(`Unknown workspace: ${idOrRoot}`);
-    activeWorkspaceId = known.id;
+    if (!target) throw new Error(`Unknown workspace: ${idOrRoot}`);
+    activeWorkspaceId = target.id;
     persistRuntime();
-    return known;
+    return target;
   };
 
   return {
     get workspace(): Workspace {
       return getActive();
     },
-    workspaces: [...workspaces.values()],
+    get workspaces(): Workspace[] {
+      return registry.getAll();
+    },
     get activeWorkspaceId(): string {
       return activeWorkspaceId;
     },
